@@ -112,11 +112,11 @@ object RlnUpdateInstaller {
 
                     val pm = appContext.packageManager
                     @Suppress("DEPRECATION")
-                    val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    val packageInfo = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         pm.getPackageArchiveInfo(apk.absolutePath, PackageManager.PackageInfoFlags.of(0L))
                     } else {
                         pm.getPackageArchiveInfo(apk.absolutePath, 0)
-                    } ?: error("APK non leggibile")
+                    }) ?: error("APK non leggibile")
                     require(packageInfo.packageName == appContext.packageName) {
                         "Il pacchetto non appartiene a RLN Network"
                     }
