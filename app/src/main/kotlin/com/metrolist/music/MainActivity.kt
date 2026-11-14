@@ -546,7 +546,7 @@ class MainActivity : FragmentActivity() {
                         it.release.tagName == preferences[it.dismissalKey]
                     }
 
-                    if (update != null && notificationsEnabled) {
+                    if (availableUpdate != null && notificationsEnabled && update != null) {
                         // A notification opens RLN Network, never the GitHub web page.
                         val intent = Intent(this@MainActivity, MainActivity::class.java)
                             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
