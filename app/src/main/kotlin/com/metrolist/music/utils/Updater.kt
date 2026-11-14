@@ -39,9 +39,7 @@ object Updater {
     private var cachedAllReleases: List<ReleaseInfo> = emptyList()
     
     private const val CHECK_INTERVAL_MILLIS = 2 * 60 * 60 * 1000L // 2 hours
-    private const val GITHUB_API_BASE = "https://api.github.com/repos/MetrolistGroup/Metrolist"
-    private const val KMP_LATEST_RELEASE_URL = "https://api.github.com/repos/MetrolistGroup/Metrolist-KMP/releases/latest"
-    private const val KMP_APK_NAME = "Metrolist.apk"
+    private const val GITHUB_API_BASE = "https://api.github.com/repos/sinisgallof-pixel/RLN-Network"
 
     /**
      * Compares two version strings.
@@ -96,21 +94,12 @@ object Updater {
             val downloadUrl = asset.getString("browser_download_url")
             val size = asset.getLong("size")
             
-            // Parse architecture and variant from filename
-            val (arch, variant) = when {
-                name == "Metrolist.apk" -> "universal" to "foss"
-                name == "Metrolist-with-Google-Cast.apk" -> "universal" to "gms"
-                name.startsWith("app-") && name.endsWith("-release.apk") -> {
-                    val arch = name.removePrefix("app-").removeSuffix("-release.apk")
-                    arch to "foss"
-                }
-                name.startsWith("app-") && name.endsWith("-with-Google-Cast.apk") -> {
-                    val arch = name.removePrefix("app-").removeSuffix("-with-Google-Cast.apk")
-                    arch to "gms"
-                }
+            // Only RLN Network assets: never offer an upstream Metrolist APK.
+            val (arch, variant) = when (name) {
+                "RLN-Network.apk" -> "universal" to "gms"
+                "RLN-Network-no-cast.apk" -> "universal" to "foss"
                 else -> null to null
-            }
-            
+            }            
             if (arch != null && variant != null) {
                 assets.add(ReleaseAsset(name, downloadUrl, size, arch, variant))
             }
@@ -119,32 +108,30 @@ object Updater {
         return assets
     }
 
-    /**
-     * Fetch latest release from GitHub API
-     */
+    /** Parse only releases published by this app's repository. */
+    internal fun parseRelease(response: String): ReleaseInfo {
+        val json = JSONObject(response)
+        val tag = json.getString("tag_name")
+        return ReleaseInfo(
+            tagName = tag,
+            versionName = tag.removePrefix("v"),
+            description = json.optString("body").takeUnless { json.isNull("body") }.orEmpty(),
+            releaseDate = json.getString("published_at"),
+            assets = parseAssets(json.getJSONArray("assets"))
+        )
+    }
+
+    /** The official release is downloaded inside RLN Network, not via the browser. */
     suspend fun getLatestRelease(forceRefresh: Boolean = false): Result<ReleaseInfo> =
         withContext(Dispatchers.IO) {
             runCatching {
-                // Return cached if available and not forcing refresh
                 if (cachedReleaseInfo != null && !forceRefresh) {
                     return@runCatching cachedReleaseInfo!!
                 }
-                
-                val response = client.get("$GITHUB_API_BASE/releases/latest")
-                    .bodyAsText()
-                val json = JSONObject(response)
-                
-                val releaseInfo = ReleaseInfo(
-                    tagName = json.getString("tag_name"),
-                    versionName = json.getString("name"),
-                    description = json.getString("body"),
-                    releaseDate = json.getString("published_at"),
-                    assets = parseAssets(json.getJSONArray("assets"))
-                )
-                
-                cachedReleaseInfo = releaseInfo
+                val release = parseRelease(client.get("$GITHUB_API_BASE/releases/latest").bodyAsText())
+                cachedReleaseInfo = release
                 lastCheckTime = System.currentTimeMillis()
-                releaseInfo
+                release
             }
         }
 
@@ -174,13 +161,7 @@ object Updater {
                     
                     for (i in 0 until json.length()) {
                         val releaseObj = json.getJSONObject(i)
-                        releases.add(ReleaseInfo(
-                            tagName = releaseObj.getString("tag_name"),
-                            versionName = releaseObj.getString("name"),
-                            description = releaseObj.getString("body"),
-                            releaseDate = releaseObj.getString("published_at"),
-                            assets = parseAssets(releaseObj.getJSONArray("assets"))
-                        ))
+                        releases.add(parseRelease(releaseObj.toString()))
                     }
                     
                     page++
@@ -188,30 +169,6 @@ object Updater {
                 
                 cachedAllReleases = releases
                 releases
-            }
-        }
-
-    internal fun parseKmpRelease(response: String): ReleaseInfo? {
-        val release = JSONObject(response)
-        val assets = parseAssets(release.getJSONArray("assets")).filter { it.name == KMP_APK_NAME }
-        val tagName = release.getString("tag_name")
-
-        return ReleaseInfo(
-            tagName = tagName,
-            versionName = tagName.removePrefix("v"),
-            description = release.optString("body").takeUnless { release.isNull("body") }.orEmpty(),
-            releaseDate = release.getString("published_at"),
-            assets = assets,
-        ).takeIf { assets.isNotEmpty() }
-    }
-
-    /**
-     * Returns the latest stable KMP release when it includes an Android APK.
-     */
-    suspend fun getLatestKmpRelease(): Result<ReleaseInfo?> =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                parseKmpRelease(client.get(KMP_LATEST_RELEASE_URL).bodyAsText())
             }
         }
 
@@ -240,7 +197,7 @@ object Updater {
                     val hasUpdate = isUpdateAvailable(
                         BuildConfig.BASE_VERSION_NAME,
                         cachedReleaseInfo!!.versionName
-                    )
+                    ) && getDownloadUrlForCurrentVariant(cachedReleaseInfo!!) != null
                     return@runCatching cachedReleaseInfo!! to hasUpdate
                 }
                 
@@ -250,7 +207,7 @@ object Updater {
                     val hasUpdate = isUpdateAvailable(
                         BuildConfig.BASE_VERSION_NAME,
                         releaseInfo.versionName
-                    )
+                    ) && getDownloadUrlForCurrentVariant(releaseInfo) != null
                     releaseInfo to hasUpdate
                 } else {
                     throw result.exceptionOrNull() ?: Exception("Unknown error")
