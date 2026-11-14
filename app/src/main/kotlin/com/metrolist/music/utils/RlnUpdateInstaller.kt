@@ -116,8 +116,8 @@ object RlnUpdateInstaller {
                         pm.getPackageArchiveInfo(apk.absolutePath, PackageManager.PackageInfoFlags.of(0L))
                     } else {
                         pm.getPackageArchiveInfo(apk.absolutePath, 0)
-                    }
-                    require(packageInfo?.packageName == appContext.packageName) {
+                    } ?: error("APK non leggibile")
+                    require(packageInfo.packageName == appContext.packageName) {
                         "Il pacchetto non appartiene a RLN Network"
                     }
                     require(packageInfo.longVersionCode > BuildConfig.VERSION_CODE.toLong()) {
