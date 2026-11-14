@@ -46,6 +46,7 @@ import com.metrolist.music.ui.component.Material3SettingsGroup
 import com.metrolist.music.ui.component.Material3SettingsItem
 import com.metrolist.music.ui.utils.backToMain
 import com.metrolist.music.utils.Updater
+import com.metrolist.music.utils.RlnUpdateInstaller
 import com.metrolist.music.utils.rememberPreference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -63,6 +64,7 @@ fun UpdaterScreen(
     var isChecking by remember { mutableStateOf(false) }
     var updateAvailable by remember { mutableStateOf(false) }
     var latestVersion by remember { mutableStateOf<String?>(null) }
+    var downloadUrl by remember { mutableStateOf<String?>(null) }
     var showChangelog by remember { mutableStateOf(false) }
     var changelogContent by remember { mutableStateOf<String?>(null) }
     var checkError by remember { mutableStateOf<String?>(null) }
@@ -74,6 +76,7 @@ fun UpdaterScreen(
         coroutineScope.launch {
             isChecking = true
             checkError = null
+            downloadUrl = null
             withContext(Dispatchers.IO) {
                 Updater
                     .checkForUpdate(forceRefresh = true)
@@ -81,6 +84,7 @@ fun UpdaterScreen(
                         if (releaseInfo != null) {
                             latestVersion = releaseInfo.versionName
                             updateAvailable = hasUpdate
+                            downloadUrl = if (hasUpdate) Updater.getDownloadUrlForCurrentVariant(releaseInfo) else null
                             changelogContent = releaseInfo.description
                         }
                     }.onFailure {
@@ -236,6 +240,20 @@ fun UpdaterScreen(
                             .fillMaxWidth()
                             .padding(16.dp),
                 )
+            }
+        }
+
+        if (updateAvailable && downloadUrl != null) {
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = {
+                    downloadUrl?.let { RlnUpdateInstaller.startDownload(context, it) }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+            ) {
+                Text(stringResource(R.string.rln_download_and_install))
             }
         }
 
