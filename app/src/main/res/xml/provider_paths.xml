@@ -12,4 +12,5 @@
     <external-files-path
         name="external_files_documents"
         path="Documents/MetrolistExports/" />
+    <external-files-path name="rln_update_apks" path="Download/RLNUpdates/" />
 </paths>
