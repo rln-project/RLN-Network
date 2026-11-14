@@ -23,7 +23,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -38,6 +37,7 @@ import com.metrolist.music.ui.component.Material3SettingsItem
 import com.metrolist.music.ui.component.ReleaseNotesCard
 import com.metrolist.music.ui.utils.backToMain
 import com.metrolist.music.utils.Updater
+import com.metrolist.music.utils.RlnUpdateInstaller
 import androidx.compose.runtime.remember
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -46,7 +46,6 @@ fun SettingsScreen(
     navController: NavController,
     latestVersionName: String,
 ) {
-    val uriHandler = LocalUriHandler.current
     val context = LocalContext.current
     val isAndroid12OrLater = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     val hasAndroidAuto = remember {
@@ -254,7 +253,7 @@ fun SettingsScreen(
                                     )
                                 },
                                 showBadge = true,
-                                onClick = { uriHandler.openUri(downloadUrl) }
+                                onClick = { RlnUpdateInstaller.startDownload(context, downloadUrl) }
                             )
                         )
                     }
