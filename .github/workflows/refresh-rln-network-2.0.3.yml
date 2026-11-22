@@ -1,0 +1,151 @@
+name: Refresh RLN Network 2.0.3
+on:
+  push:
+    branches: [ci/refresh-rln-network-2.0.3]
+permissions:
+  contents: read
+concurrency:
+  group: rln-release-publication
+  cancel-in-progress: false
+jobs:
+  update-source:
+    if: github.repository == 'rln-project/RLN-Network'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      revision: ${{ steps.update.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feature/kmp-in-app-updates-final
+      - name: Update Android release URLs
+        id: update
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          new = b'rln-project/RLN-Network'
+          root = Path('androidApp/src')
+          targets = {'main': ('AppUpdateManager.kt', 1), 'test': ('AppUpdateManagerTest.kt', 2)}
+          for source_set, (filename, count) in targets.items():
+              path = root / source_set / 'kotlin/com/metrolist/android/update' / filename
+              data = path.read_bytes()
+              assert data.count(new) == count, path
+          PY
+          git diff --check
+          if ! git diff --quiet; then
+            test "$(git rev-parse HEAD)" = 1ced385d04c7e40262931e0ec349f29ea6298f28
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -am 'fix(android): use the current RLN Network repository'
+            git push origin HEAD:refs/heads/feature/kmp-in-app-updates-final
+          fi
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+  build:
+    needs: update-source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.update-source.outputs.revision }}
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd
+        with:
+          packages: platform-tools
+      - id: signing
+        uses: ./.github/actions/prepare-android-signing
+        env:
+          KEYSTORE_PATH: ${{ secrets.KEYSTORE }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      - name: Test the updater and build the signed APK
+        env:
+          SIGNING_AVAILABLE: ${{ steps.signing.outputs.signing_available }}
+          KEYSTORE_PATH: ${{ steps.signing.outputs.keystore_path }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          test "$SIGNING_AVAILABLE" = true
+          ./gradlew :androidApp:testDebugUnitTest --tests 'com.metrolist.android.update.*' :androidApp:assembleRelease --no-configuration-cache
+      - name: Verify signing, version and update URL
+        run: |
+          set -euo pipefail
+          apks=(androidApp/build/outputs/apk/release/*.apk)
+          test "${#apks[@]}" -eq 1 && test -f "${apks[0]}"
+          apk="${apks[0]}"
+          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
+          "$signer" verify --print-certs "$apk" > "$RUNNER_TEMP/signature.txt"
+          grep -E 'certificate SHA-256 digest: 43f8d1591f70239277bc7374bd0b80c693829a251fac9e3a00d5e12d5d274467$' "$RUNNER_TEMP/signature.txt"
+          "${signer%/*}/aapt" dump badging "$apk" > "$RUNNER_TEMP/badging.txt"
+          grep -F "package: name='com.rlnnetwork.music.kmp' versionCode='157' versionName='2.0.3'" "$RUNNER_TEMP/badging.txt"
+          python3 - "$apk" <<'PY'
+          import sys
+          from zipfile import ZipFile
+          found = False
+          with ZipFile(sys.argv[1]) as apk:
+              for name in apk.namelist():
+                  contents = apk.read(name).lower()
+                  found |= name.endswith('.dex') and b'api.github.com/repos/rln-project/rln-network/releases' in contents
+          assert found
+          PY
+          mkdir dist
+          cp "$apk" dist/RLN-Network-2.0.3.apk
+          (cd dist && sha256sum RLN-Network-2.0.3.apk > SHA256SUMS)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: verified-rln-network-2.0.3
+          path: dist/
+          if-no-files-found: error
+      - name: Remove temporary signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.keystore"
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: rln-project/RLN-Network
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-rln-network-2.0.3
+          path: dist
+      - name: Update the existing v2.0.3 downloads
+        run: |
+          set -euo pipefail
+          tag=v2.0.3
+          apk=RLN-Network-2.0.3.apk
+          gh api "repos/$GH_REPO/releases/tags/$tag" | jq -e '.id == 451392318 and .immutable == false and .draft == false and ([.assets[].id] | sort) == [767822932,767822935]' >/dev/null
+          (cd dist && sha256sum -c SHA256SUMS)
+          mkdir previous published
+          gh release download "$tag" --pattern "$apk" --pattern SHA256SUMS --dir previous
+          (cd previous && sha256sum -c SHA256SUMS)
+          replaced=()
+          rollback() {
+            local status=$?
+            trap - EXIT
+            if (( status != 0 )); then
+              for name in "${replaced[@]}"; do
+                gh release upload "$tag" "previous/$name" --clobber || echo "::error::Could not restore $name"
+              done
+            fi
+            exit "$status"
+          }
+          trap rollback EXIT
+          for name in "$apk" SHA256SUMS; do
+            replaced+=("$name")
+            gh release upload "$tag" "dist/$name" --clobber
+          done
+          gh release download "$tag" --pattern "$apk" --pattern SHA256SUMS --dir published
+          cmp dist/SHA256SUMS published/SHA256SUMS
+          (cd published && sha256sum -c SHA256SUMS)
+          trap - EXIT
